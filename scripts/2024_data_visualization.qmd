@@ -1,0 +1,271 @@
+---
+title: "Data Visualization with the Tidyverse in R"
+editor: visual
+author: "Jason Laird"
+date: "05/29/2024"
+format: 
+  html:
+    toc: true
+    toc-location: left
+    theme: 
+      - flatly
+    linkcolor: '#555580'
+---
+
+## Introduction To ggplot2
+
+`ggplot2` is by far one of the premier plotting packages offered through R. Here we will walk through the basics of how to make a publication ready plot!
+
+## Load Libraries
+
+```{r}
+library(tidyverse)
+library(ggpubr)
+```
+
+## Load Data
+
+```{r}
+brainspan <- readr::read_csv("../results/brainspan.csv")
+```
+
+## Creating Different Types of Plots
+
+### Scatter Plot
+
+```{r}
+brainspan %>% 
+  ggplot(
+    aes(
+      x=GAPDH,
+      y=ACTB,
+      color=gender
+    )
+  )+
+  geom_point()
+```
+
+### Bar Plots
+
+```{r}
+brainspan %>% 
+  tabyl(structure_acronym,gender) %>% 
+  pivot_longer(!structure_acronym,names_to="gender",values_to="value") %>% 
+  ggplot(
+    aes(
+      x=reorder(structure_acronym,-value),
+      y=value,
+      fill=gender
+    )
+  )+
+  geom_bar(stat="identity")+
+  rotate_x_text(angle=60)
+```
+
+### Histograms (Density Plot)
+
+```{r}
+brainspan %>% 
+  ggplot(aes(
+    x=GAPDH
+  ))+
+  geom_density(fill="violetred4")
+```
+
+### Violin Plots
+
+```{r}
+brainspan %>% 
+  ggplot(aes(
+    x=gender,
+    y=GAPDH,
+    fill=gender
+  ))+
+  geom_violin()
+```
+
+## Customizing Plots
+
+### Adjusting the Axis
+
+```{r}
+brainspan %>% 
+  ggplot(aes(
+    x=gender,
+    y=GAPDH,
+    fill=gender
+  ))+
+  geom_violin()+
+  scale_y_log10()
+```
+
+### Colors
+
+```{r}
+brainspan %>% 
+  ggplot(
+    aes(
+      x=GAPDH,
+      y=ACTB,
+      color=gender
+    )
+  )+
+  geom_point()+
+  scale_color_manual(values=c("magenta4","midnightblue"))
+```
+
+### Shapes
+
+```{r}
+brainspan %>% 
+  ggplot(
+    aes(
+      x=GAPDH,
+      y=ACTB,
+      color=gender,
+      shape = gender
+    )
+  )+
+  geom_point()+
+  scale_color_manual(values=c("magenta4","midnightblue"))
+```
+
+### Sizes
+
+```{r}
+brainspan %>% 
+  ggplot(
+    aes(
+      x=GAPDH,
+      y=ACTB,
+      color=gender,
+      shape = gender,
+      size = GAPDH
+    )
+  )+
+  geom_point()+
+  scale_color_manual(values=c("magenta4","midnightblue"))
+```
+
+### Adjusting the Text
+
+```{r}
+brainspan %>% 
+  ggplot(
+    aes(
+      x=GAPDH,
+      y=ACTB,
+      color=gender,
+      shape = gender,
+      size = GAPDH
+    )
+  )+
+  geom_point()+
+  scale_color_manual(values=c("magenta4","midnightblue"))+
+  labs(
+    x="GAPDH",
+    y="ACTB",
+    size="GAPDH",
+    color="Gender",
+    shape = "Gender",
+    title="Scatterplot GAPDH v. ACTB",
+    subtitle = "males v. females",
+    caption = "For educational purposes only"
+  )
+```
+
+### Faceting
+
+```{r}
+brainspan %>% 
+  ggplot(
+    aes(
+      x=GAPDH,
+      y=ACTB,
+      color=gender,
+      shape = gender,
+      size = GAPDH
+    )
+  )+
+  geom_point()+
+  scale_color_manual(values=c("magenta4","midnightblue"))+
+  labs(
+    x="GAPDH",
+    y="ACTB",
+    size="GAPDH",
+    color="Gender",
+    shape = "Gender",
+    title="Scatterplot GAPDH v. ACTB",
+    subtitle = "males v. females",
+    caption = "For educational purposes only"
+  )+
+  facet_grid(.~gender)
+```
+
+### General Themes
+
+```{r}
+brainspan %>% 
+  ggplot(
+    aes(
+      x=GAPDH,
+      y=ACTB,
+      color=gender,
+      shape = gender,
+      size = GAPDH
+    )
+  )+
+  geom_point()+
+  scale_color_manual(values=c("magenta4","midnightblue"))+
+  labs(
+    x="GAPDH",
+    y="ACTB",
+    size="GAPDH",
+    color="Gender",
+    shape = "Gender",
+    title="Scatterplot GAPDH v. ACTB",
+    subtitle = "males v. females",
+    caption = "For educational purposes only"
+  )+
+  facet_grid(.~gender)+
+  theme_pubr(legend="right")
+```
+
+### Customize the Theme
+
+```{r}
+brainspan %>% 
+  ggplot(
+    aes(
+      x=GAPDH,
+      y=ACTB,
+      color=gender,
+      shape = gender,
+      size = GAPDH
+    )
+  )+
+  geom_point()+
+  scale_color_manual(values=c("magenta4","midnightblue"))+
+  labs(
+    x="GAPDH",
+    y="ACTB",
+    size=expression("Log"[10]*gamma),
+    color="Gender",
+    shape = "Gender",
+    title= "Scatterplot GAPDH v. ACTB",
+    subtitle = "males v. females",
+    caption = "For educational purposes only"
+  )+
+  facet_grid(.~gender)+
+  theme_pubr(legend="right")+
+  theme(plot.title = element_text(face="bold.italic"))
+```
+
+## Saving Plots
+
+```{r}
+ggsave(
+  filename = "../results/finished_scatterplot.png",
+  plot = last_plot()
+)
+```

@@ -1,0 +1,110 @@
+---
+title: "Classification with Logistic Regression"
+editor: visual
+author: "Jason Laird"
+date: "06/12/2024"
+format: 
+  html:
+    toc: true
+    toc-location: left
+    theme: 
+      - flatly
+    linkcolor: '#555580'
+---
+
+## Load Libraries
+
+```{r}
+#| warning: false
+#| message: false
+
+
+library(tidymodels)  # parsnip and others
+library(readr)       # for importing data
+library(broom.mixed) # for converting bayesian models to tidy tibbles
+library(performance) # model performance
+library(ggpubr)      # plotting wrapper
+```
+
+## Load Data
+
+```{r}
+#| warning: false
+#| message: false
+
+
+brainspan_log <- readr::read_csv("../results/brainspan_log.csv")
+```
+
+## An Introduction to Classification
+
+If the question is what class is this sample, then you need to build a classifier! The first step for most classifiers is logistic regression is it in the class or not. Here we will try to predict is the sample from a male or female. But you may ask, well, why can't I use linear prediction? My outcome would be either 0 or 1 and I'd draw a line through my points. Well here is why:
+
+[![Image Credit from JavaPoint](data/img/linear-regression-vs-logistic-regression.png)](https://www.javatpoint.com/linear-regression-vs-logistic-regression-in-machine-learning)
+
+Here we see that when we draw a line through our points, it goes past 0 and 1! So the more appropriate method would be to use logistic regression.
+
+## Plot the Data
+
+Let's explore the relationship between NLGN4Y (Neuroligin 4, Y-linked) and sex:
+
+```{r}
+#| warning: false
+#| message: false
+brainspan_log %>% 
+  ggplot(
+    aes(
+      x=NLGN4Y,
+      y=gender
+    )
+  )+
+  geom_point(color="grey25")+
+  theme_pubr(legend="right")
+
+brainspan_log %>% 
+  ggplot(
+    aes(
+      x=NID1        ,
+      y=gender
+    )
+  )+
+  geom_point(color="grey25")+
+  theme_pubr(legend="right")
+```
+
+Here we see that this gene does a reasonably good job at stratifying sex. We can move on and create a logistic regression model to do just that!
+
+## Build the Model
+
+```{r}
+log_fit <- workflow() %>% 
+  # define the model
+  add_model(logistic_reg() %>% 
+              set_engine("glm")) %>% 
+  # set the pre-processing
+  add_recipe(
+    brainspan_log %>% 
+      recipe(gender~NLRP2+LAMA4+JPX) %>% 
+      step_mutate(gender=factor(gender,levels=c("F","M"))) %>% 
+      step_normalize(all_predictors())
+  ) %>% 
+  # fit the model to the pre-processed data
+  fit(data=brainspan_log)
+
+broom::tidy(log_fit)
+```
+
+Here we see that indeed NLGN4Y does predict sex, the estimate of \~5.81 suggests a small increase in NLGN4Y results in a higher probability in the sex being male versus female. the p-value suggests that this is result is unlikely due to chance.
+
+## Assumptions
+
+```{r}
+check_model(log_fit %>%
+              extract_fit_engine(),
+            check=c("vif","outliers"))
+```
+
+## References
+
+1.  [Java Point - Logistic Regression](https://www.javatpoint.com/linear-regression-vs-logistic-regression-in-machine-learning)
+2.  [Getting Started - Tidymodels](https://www.tidymodels.org/start/)

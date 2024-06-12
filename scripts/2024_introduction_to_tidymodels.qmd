@@ -1,0 +1,212 @@
+---
+title: "Introduction to Tidymodels"
+editor: visual
+author: "Jason Laird"
+date: "06/12/2024"
+format: 
+  html:
+    toc: true
+    toc-location: left
+    theme: 
+      - flatly
+    linkcolor: '#555580'
+---
+
+## Load Libraries
+
+```{r}
+#| warning: false
+#| message: false
+
+
+library(tidymodels)  # parsnip and others
+library(readr)       # for importing data
+library(broom.mixed) # for converting bayesian models to tidy tibbles
+library(performance) # model performance
+library(ggpubr)      # plotting wrapper
+```
+
+## Starting with a Question
+
+Machine learning is a very cool word to throw around and there are a lot of techniques out there. However, using a particular method without understanding the nuances can lead to trouble. So let's start by breaking down the question that leads you to the method!
+
+-   **What is the predicted group going to be?**
+
+    -   **Method:** Supervised Learning
+
+    -   **Algorithms:** Logistic Regression, Decision Trees, Random Forest, Support Vector Machines (SVM), Neural Networks
+
+-   **What is the predicted numeric outcome?**
+
+    -   **Method:** Supervised Learning
+
+    -   **Algorithms:** Linear Regression, Polynomial Regression, Ridge Regression, Lasso Regression, Elastic Net Regression, Neural Networks
+
+-   **Without any sort of prior information, can we make groups out of our data?**
+
+    -   **Method**: Unsupervised Learning (Clustering)
+
+    -   **Algorithms**: K-Means, Hierarchical Clustering, DBSCAN, Gaussian Mixture Models
+
+-   **How can we reduce the number of features and still preserve information?**
+
+    -   **Method**: Unsupervised Learning (Dimensionality Reduction)
+
+    -   **Algorithms**: Principal Component Analysis (PCA), t-Distributed Stochastic Neighbor Embedding (t-SNE), Linear Discriminant Analysis (LDA)
+
+## Plotting the Data
+
+Before we make any sort of model, it is paramount to **look** at your data. Looking at your data can drastically alter downstream analyses and the **questions** you ask. In this tutorial we will examine the relationship between myelin binding protein (MBP) and the expression of a marker for the cell responsible for myelinating neurons in the central nervous system, oligodendrocytes (OLIG2). But first we will log2 transform our data to ensure a consistent scale and add in a column for numeric age of the patient.
+
+```{r}
+#| warning: false
+#| message: false
+
+
+brainspan <- readr::read_csv("../results/brainspan.csv")
+
+log2_1 <- function(x){log2(x+1)}
+
+brainspan_log <- brainspan %>% 
+  mutate(across(where(is.numeric),log2_1)) %>%  
+  mutate(num_age=case_when(
+    grepl("pcw",age) ~ (as.numeric(gsub(" .*","",age))/12),
+    grepl("yrs",age) ~ as.numeric(gsub(" .*","",age))
+  ))
+
+brainspan_log %>% 
+  ggplot(
+    aes(
+      x=OLIG2,
+      y=MBP,
+      color=num_age
+    )
+  )+
+  geom_point()+
+  theme_pubr(legend="right")+
+  scale_color_gradient(low="thistle",high="midnightblue")+
+  stat_smooth(method="lm",color="violetred4")+
+  stat_cor()
+```
+
+Here we see that there are two groups in our data, and if we had charged ahead with creating a model, we would have never seen this. So let's parse this out a little more, we see a difference in expression between older patients and younger ones. So for the sake of this tutorial we will proceed with samples that have a MBP value over 5 to grab samples from the older patients.
+
+```{r}
+#| warning: false
+#| message: false
+
+
+brainspan_log %>% 
+  filter(MBP>5) %>% 
+  ggplot(
+    aes(
+      x=OLIG2,
+      y=MBP,
+      color=num_age
+    )
+  )+
+  geom_point()+
+  theme_pubr(legend="right")+
+  scale_color_gradient(low="thistle",high="midnightblue")+
+  stat_smooth(method="lm",color="violetred4")+
+  stat_cor()
+```
+
+## Building a Recipe
+
+Ok, so where does this leave us? Well we need to pre-process our data and filter out samples. It would also be a good idea to ensure our variables are on the same scale when we make our predictions. When plotting we made a new data frame with log transformed values. However, to avoid creating unnecessary variables you can pre-process your data in one step using what `tidymodels` calls a **recipe**:
+
+```{r}
+lm_recipe <- brainspan %>% 
+  recipe(MBP ~ OLIG2) %>% 
+  step_filter(MBP>5) %>% 
+  step_log(where(is.numeric)) %>% 
+  step_normalize(all_predictors())
+
+lm_recipe
+```
+
+## Building a Model
+
+So currently our model is as follows:
+
+`MBP ~ OLIG2`
+
+We are predicting myelinating binding protein expression using a marker for mature oligodendrocytes (OLIG2). Given we are predicting a numeric outcome (MBP) we need the right **method**, which would be regression. `parsnip` calls this method the model's **engine.** Here we set the model engine to `lm` for ordinary least squares. If you ever want to build a different model with a different engine, check out the [tidymodels parsnip models page](https://www.tidymodels.org/find/parsnip/)! Now, to combine the recipe and the engine, we need to define a **workflow:**
+
+```{r}
+#| warning: false
+#| message: false
+
+
+lm_mod <- linear_reg() %>% 
+  set_engine("lm")
+
+lm_workflow <- 
+  workflow() %>% 
+  add_model(lm_mod) %>% 
+  add_recipe(lm_recipe)
+
+lm_fit <- 
+  lm_workflow %>% 
+  fit(data = brainspan)
+
+lm_fit
+```
+
+`tidymodels` has a convenient format for examining model stats - `broom::tidy`. Let's examine this!
+
+```{r}
+#| warning: false
+#| message: false
+
+broom::tidy(lm_fit)
+```
+
+Here we see that the term `OLIG2` has:
+
+-   an estimate of \~ `0.37` indicating a one unit increase in `OLIG2` results in a 0.37 unit increase in `MBP`
+
+-   The standard error of this term is \~ `0.06`
+
+-   The test statistic is \~ `6.07` indicating this result is not likely by chance
+
+-   the p-value is \~ `3.9e-09` , indicating this result is not likely by chance
+
+## Testing Assumptions
+
+When you build a model, there are always assumptions. The `performance` package offers a neat tool, `check_model` to determine just those assumptions and even provides a caption to let you know what you should be expecting!
+
+```{r}
+#| warning: false
+#| message: false
+
+lm_fit %>%
+  extract_fit_engine() %>% 
+  check_model(check = c("pp_check","linearity","homogeneity","outliers"))
+```
+
+Here we have a few items to consider:
+
+-   **Posterior predictive check:** does the predicted distribution of MBP match the observed distribution?
+
+-   **Linearity:** confirm that there is no relationship between the fitted values and residuals (distance between point and best fit line)
+
+-   **Homogeneity of the Variance:** is the variance equal across all samples?
+
+-   **Influential observations**: are there any outliers in the data?
+
+## Saving Data
+
+Here we will save our log2 transformed counts for later as they also contain a cleaned numeric age variable as well.
+
+```{r}
+#| warning: false
+#| message: false
+
+readr::write_csv(brainspan_log,file="../results/brainspan_log.csv")
+```
+
+## References
+
+1.  [Getting Started - Tidymodels](https://www.tidymodels.org/start/)

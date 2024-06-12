@@ -1,0 +1,197 @@
+---
+title: "Data Manipulation with the Tidyverse in R"
+editor: visual
+author: "Jason Laird"
+date: "05/29/2024"
+format: 
+  html:
+    toc: true
+    toc-location: left
+    theme: 
+      - flatly
+    linkcolor: '#555580'
+---
+
+## Introduction to Tidy Data
+
+-   Each variable should be a column
+
+-   Each observation should be a row
+
+## Load Libraries
+
+```{r}
+#| warning: false
+#| message: false
+
+
+#install.packages("tidyverse")
+#install.packages("janitor")
+library(tidyverse)
+library(janitor)
+```
+
+## Reading and Writing Data with readr
+
+readr is a great package for reading and writing data quickly.
+
+```{r}
+#| warning: false
+#| message: false
+
+
+counts <- readr::read_csv(file = "../data/expression_matrix.csv",col_names = FALSE)
+
+meta <- readr::read_csv("../data/columns_metadata.csv")
+
+features <- readr::read_csv("../data/rows_metadata.csv")
+```
+
+## Exploring Data
+
+There are a number of ways you can quickly examine your data. Two popular methods are using `str` and `glimpse`. Here we will use glimpse since it is a little cleaner of a view than `str` .
+
+```{r}
+#| warning: false
+#| message: false
+
+glimpse(meta)
+```
+
+## Selecting Data
+
+To select a particular column you use the `select` function. Note that we specify it comes from the `dplyr::` package. This is done for functions with common names to avoid using the wrong function from a different package. Here we demonstrate how to select the age column in the meta data. Also note that we *chain* commands together using the `%>%` operator.
+
+```{r}
+#| warning: false
+#| message: false
+
+meta %>% 
+  dplyr::select(age)
+```
+
+## Filtering Data
+
+Now say we are only interested in looking at samples from week 12 post conception. We can do that using the `filter` function.
+
+```{r}
+#| warning: false
+#| message: false
+
+meta %>% 
+  filter(age == "12 pcw") 
+```
+
+## Arranging Data
+
+If we wanted to arrange our data we can use the `arrange` function, which will by default sort in alphabetical order or smallest to largest if the column is numeric.
+
+```{r}
+#| warning: false
+#| message: false
+
+meta %>% 
+  arrange(gender)
+```
+
+```{r}
+#| warning: false
+#| message: false
+
+meta %>% 
+  arrange(desc(gender))
+```
+
+## Mutating Data
+
+We can create new data or *mutate* it using the `mutate` function. So for example say we wanted to change the `column_num` column to a column with character values instead of numeric values (we will need this for later!)
+
+```{r}
+#| warning: false
+#| message: false
+
+meta <- meta %>% 
+  mutate(column_char=as.character(column_num))
+```
+
+## Summarizing Data
+
+Often times we need to summarize our results or larger tabular data. We can use the `summarize` function for numeric data (However, we don't have any here). And for categorical variables we can use the `tabyl` and `adorn` functions in the `janitor` package.
+
+```{r}
+#| warning: false
+#| message: false
+
+meta %>%  # data frame to work with
+  tabyl(structure_name,gender) %>% # tabulate by structure and gender
+  adorn_totals("row") %>% # adorn totals by row
+  adorn_percentages("all") %>% # adorn percentages to all cells
+  adorn_pct_formatting(digits = 1) %>% # round the percentage to the first digit
+  adorn_ns # keep both count and percentage
+```
+
+## Joining Data
+
+Oftentimes we will need to join two data frames. For instance, earlier, we imported count data, feature data and meta data. It would be beneficial to have this information in one data frame. Let's start by joining the count and feature data. Here I use an inner join to only join on rows that match. You'll also note that I change a column in each data frame to a character value. This is because to join on a value that value needs to be a character.
+
+```{r}
+#| warning: false
+#| message: false
+
+count_feature <- inner_join(
+  counts %>% 
+    mutate(X1=as.character(X1)),
+  features %>% 
+    mutate(row_num=as.character(row_num)),
+  by=c("X1"="row_num")
+)
+```
+
+Before we can continue mapping this back to our meta data we need more descriptive names for our genes other than 1, 2, 3, etc.. So we will use the gene names! However our RNA-seq data has multiple gene names per ENSEMBL id. To perform a gene level analysis we will group our data by `gene_symbol` and sum the columns in our counts data frame (our samples). This way we have one value per sample per gene. To convert the `gene_symbol` column into our row names we will use the `column_to_rownames` function.
+
+```{r}
+#| warning: false
+#| message: false
+
+count_feature <- count_feature %>%
+  group_by(gene_symbol) %>% 
+  summarize(across(names(counts)[-1],sum)) %>% 
+  column_to_rownames("gene_symbol")
+```
+
+Now to map our count data back to our meta data we need to flip the data so that samples are in the rows, just like our meta data. However, in doing that we change the data type from a data frame to a matrix. We need to change it back to a data frame with `as.data.frame`. Then we can add a character value column to map it back to our meta data (this is the `id` column).
+
+```{r}
+#| warning: false
+#| message: false
+
+count_feature <- count_feature %>% 
+  t()  %>% 
+  as.data.frame() %>% 
+  mutate(id=as.character(1:524))
+```
+
+Now finally we can map our count data back to our meta data!
+
+```{r}
+#| warning: false
+#| message: false
+
+brainspan <- inner_join(
+  count_feature,
+  meta,
+  by=c("id"="column_char")
+)
+```
+
+## Saving Data
+
+We can now save our data frame using the `write_csv` function!
+
+```{r}
+#| warning: false
+#| message: false
+
+readr::write_csv(brainspan,
+                 file = "../results/brainspan.csv")
+```

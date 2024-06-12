@@ -1,0 +1,186 @@
+---
+title: "Penalized Regression"
+subtitle: "Interrogate Model Coefficients and Identify Features of Interest"
+editor: visual
+author: "Jason Laird"
+date: "06/12/2024"
+format: 
+  html:
+    toc: true
+    toc-location: left
+    theme: 
+      - flatly
+    linkcolor: '#555580'
+---
+
+## Load Libraries
+
+```{r}
+#| warning: false
+#| message: false
+
+
+library(tidymodels)  # parsnip and others
+library(readr)       # for importing data
+library(broom.mixed) # for converting bayesian models to tidy tibbles
+library(performance) # model performance
+library(ggpubr)      # plotting wrapper
+
+```
+
+## Load Data
+
+```{r}
+#| warning: false
+#| message: false
+
+brainspan_log <- readr::read_csv("../results/brainspan_log.csv")
+```
+
+## Penalized Regression
+
+As we have seen coefficients can be misleading and extracting the right features can be difficult. Modifying the coefficients to highlight our most informative features can be accomplished using penalized regression, where we *penalize* coefficients that are not as informative to our model. There are two types of penalization:
+
+-   L1 or Lasso regression in which uninformative terms have their coefficients shrunk close to 0
+
+-   L2 or Ridge regression which can be helpful for untangling highly correlated predictors
+
+And then we have a third category - elastic net regression. Which is a blend of both Lasso and Ridge penalties. Let's build an elastic net regression model using the multivariate model we are familiar with:
+
+```{r}
+glmnet_spec <- 
+  linear_reg(penalty = 0.1, 
+             mixture = 0.95) %>% 
+  set_engine("glmnet")
+
+glmnet_wflow <- workflow() %>% 
+  # define the model
+  add_model(linear_reg(
+    penalty = 0.1, mixture = 0.95) %>% 
+  set_engine("glmnet")) %>% 
+  # set the pre-processing
+  add_recipe(
+    brainspan_log %>% 
+      recipe(MBP ~ OLIG2+GAPDH+EGR2+SOX10) %>% 
+      step_filter(MBP>5) %>%
+      step_normalize(all_predictors())
+  ) 
+
+glmnet_fit <- glmnet_wflow %>% 
+  # fit the model to the pre-processed data
+  fit(data=brainspan_log)
+
+
+broom::tidy(glmnet_fit) %>% 
+  filter(term != "(Intercept)") %>% 
+  mutate(bar_color=case_when(
+    estimate>0  ~"up",
+    estimate<0  ~"down",
+    .default = "not sig")) %>% 
+  ggplot(
+    aes(
+      x=reorder(term,-estimate),
+      y=estimate,
+      fill=bar_color
+    )
+  )+
+  scale_fill_manual(values=c(
+    "up"="firebrick4",
+    "down"="midnightblue",
+    "not sig"="grey25"
+  ))+
+  geom_bar(stat="identity")+
+  theme_pubr(legend="none")+
+  labs(
+    x="Model Term",
+    y="Coefficient"
+  )
+```
+
+Here we can see that two terms are kept, SOX10 and EGR2.
+
+## Changing the Penalty
+
+Chosing a mixture and a penalty can feel a bit arbitrary, so it is a good idea to see what happens to your coefficients as you change them. Here we will set a range of penalties from $10^-3$ to $10^0$ and mixtures of 1 (Lasso) or 0.1 (close to Ridge):
+
+```{r}
+# generate a sequence of penalty values from 10^-3 to 10^0
+pen_vals <- 10^seq(-3, 0, length.out = 10)
+
+# create a grid of tuning parameters with the penalty values and mixture values
+grid <- crossing(penalty = pen_vals, mixture = c(0.1, 1.0))
+
+# specify a glmnet model with the penalty and mixture as tunable parameters
+glmnet_tune_spec <- 
+  linear_reg(penalty = tune(), mixture = tune()) %>% 
+  set_engine("glmnet", path_values = pen_vals)
+
+# update the workflow with the glmnet model specification
+glmnet_wflow <- 
+  glmnet_wflow %>% 
+  update_model(glmnet_tune_spec)
+
+# function to extract glmnet coefficients from the model fit
+get_glmnet_coefs <- function(x) {
+  x %>% 
+    extract_fit_engine() %>% 
+    tidy(return_zeros = TRUE) %>% 
+    rename(penalty = lambda)
+}
+
+# control grid for the tuning process with the custom extraction function
+parsnip_ctrl <- control_grid(extract = get_glmnet_coefs)
+
+# perform the tuning process using bootstrapped resamples
+glmnet_res <- 
+  glmnet_wflow %>% 
+  tune_grid(
+    resamples = bootstraps(brainspan_log, times = 50),
+    grid = grid,
+    control = parsnip_ctrl
+  )
+
+# extract and process the glmnet coefficients from the tuning results
+glmnet_coefs <- 
+  glmnet_res %>% 
+  select(id, .extracts) %>% 
+  unnest(.extracts) %>% 
+  select(id, mixture, .extracts) %>% 
+  group_by(id, mixture) %>%          
+  slice(1) %>%                       
+  ungroup() %>%                      
+  unnest(.extracts)
+
+# plot the glmnet coefficients
+glmnet_coefs %>% 
+  filter(term != "(Intercept)") %>% 
+  mutate(mixture = format(mixture)) %>% 
+  ggplot(aes(x = penalty,
+             y = estimate, 
+             col = mixture,
+             groups = id)) + 
+  geom_hline(yintercept = 0) +
+  geom_line(alpha = 0.5) + 
+  facet_wrap(~ term) + 
+  scale_color_brewer(palette = "Pastel1") +
+  labs(x = "Penalty",
+       y = "Coefficient") +
+  theme_pubr(legend = "right")
+
+```
+
+Here we see that:
+
+-   **EGR2** is negative when the penalty is low and selected out when the penalty increases
+
+-   **GAPDH** (never an actual model term since it is a housekeeping gene) never contributes any significant change at any penalty/mixture
+
+-   **OLIG2** is negative to 0 at low penalties and minimally positive at high penalties
+
+-   **SOX10** is always positive. However, its coefficient becomes smaller as the penalty is increased.
+
+    In terms of feature selection, this would indicate that SOX10 would be of interest given it is consistently positive.
+
+    ## References
+
+    1.  [Working with model coefficients](https://www.tidymodels.org/learn/models/coefficients/index.html#more-complex-a-glmnet-model)

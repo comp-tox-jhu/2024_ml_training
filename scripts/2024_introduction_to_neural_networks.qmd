@@ -1,0 +1,183 @@
+---
+title: "Introduction to Neural Networks"
+subtitle: ""
+editor: visual
+author: "Jason Laird"
+date: "06/12/2024"
+format: 
+  html:
+    toc: true
+    toc-location: left
+    theme: 
+      - flatly
+    linkcolor: '#555580'
+jupyter: python3
+---
+
+## Install Packages
+
+<https://www.kaggle.com/code/ryanholbrook/a-single-neuron>
+
+<https://www.geeksforgeeks.org/introduction-to-recurrent-neural-network/?ref=lbp>
+
+<https://www.kaggle.com/learn/computer-vision>
+
+
+
+## Load Data
+
+We split the dataset into training and test sets using $X_{train}$, $$X_{test}$$, $$Y_{train}$$, and $$Y_{test}$$. We then standardize our data to ensure each feature $X_i$​ has a mean of 0 and a standard deviation of 1:
+
+𝑋scaled=𝑋−𝜇𝜎Xscaled​=σX−μ​ where 𝜇μ is the mean and 𝜎σ is the standard deviation of the feature.
+
+```{python}
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+
+# Load the dataset
+data = pd.read_csv("../results/brainspan_log.csv")
+
+# Separate features (X) and labels (y)
+#X = data.drop(columns=['gender','id', 'column_num', 'donor_id', 'donor_name', 'age', 'gender','structure_id', 'structure_acronym', 'structure_name', 'num_age'])
+X = data.iloc[:,15000:15100]
+y = data['gender']
+
+if y.dtype == 'object':
+    le = OneHotEncoder()
+    y = le.fit_transform(y)
+
+# Split the dataset into training and test sets
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+# Standardize the feature columns
+scaler = StandardScaler()
+X_train = scaler.fit_transform(X_train)
+X_test = scaler.transform(X_test)
+```
+
+### **Build a Basic Neural Network with One Node**
+
+1.  **Initialization:** We create a Sequential model which will stack layers sequentially.
+
+2.  **Single Neuron Layer:**
+
+    -   **Dense Layer:** A fully connected layer with one neuron.
+
+    -   **Input Dimension:** input_dim=𝑛input_dim=n where 𝑛n is the number of input features.
+
+    -   **Activation Function:** Sigmoid function 𝜎(𝑧)=11+𝑒−𝑧σ(z)=1+e−z1​.
+
+3.  **Loss Function:**
+
+    -   **Binary Cross-Entropy:** For binary classification, the loss function is: 𝐿(𝑦,𝑦^)=−1𝑚∑𝑖=1𝑚\[𝑦𝑖log⁡(𝑦𝑖)+(1−𝑦𝑖)log⁡(1−𝑦^𝑖)\]L(y,y​)=−m1​∑i=1m​\[yi​log(y^​i​)+(1−yi​)log(1−y^​i​)\] where 𝑦y is the true label and 𝑦^y^​ is the predicted probability.
+
+4.  **Optimizer:** Adam optimizer adjusts weights using gradients.
+
+```{python}
+import tensorflow as tf
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense
+
+# Initialize the neural network
+model = Sequential()
+
+# Add a single neuron
+model.add(Dense(1, input_dim=X_train.shape[1], activation='sigmoid'))
+
+# Compile the model
+model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+
+# Train the model
+model.fit(X_train, y_train, epochs=50, batch_size=10, validation_data=(X_test, y_test))
+
+```
+
+### **Build a More Complex Neural Network for Classification**
+
+1.  **Hidden Layers:**
+
+    -   **ReLU Activation:** ReLU(𝑧)=max⁡(0,𝑧)ReLU(z)=max(0,z). Introduces non-linearity and helps with vanishing gradient problem.
+
+    -   The hidden layers consist of 64, 32, and 16 neurons respectively.
+
+2.  **Output Layer:** Same as before with a sigmoid activation for binary classification.
+
+3.  **Training:** The model learns to minimize the loss function over epochs.
+
+```{python}
+# Initialize the neural network
+model = Sequential()
+
+# Add layers
+model.add(Dense(64, input_dim=X_train.shape[1], activation='relu'))
+model.add(Dense(32, activation='relu'))
+model.add(Dense(16, activation='relu'))
+model.add(Dense(1, activation='sigmoid'))
+
+# Compile the model
+model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+
+# Train the model
+history = model.fit(X_train, y_train, epochs=50, batch_size=10, validation_data=(X_test, y_test))
+
+```
+
+### Evaluate the Model
+
+1.  **Evaluation:** The model's performance is evaluated using the test set.
+
+2.  **Accuracy:** The fraction of correct predictions: Accuracy=Number of Correct PredictionsTotal Number of PredictionsAccuracy=Total Number of PredictionsNumber of Correct Predictions​
+
+```{python}
+# Evaluate the model
+loss, accuracy = model.evaluate(X_test, y_test)
+print(f'Test Accuracy: {accuracy*100:.2f}%')
+```
+
+### **Visualize the Training Process**
+
+1.  **Visualization:** Plotting accuracy and loss over epochs helps understand the model's learning process.
+
+2.  **Training vs. Validation:** Helps detect overfitting if the training accuracy improves but validation accuracy plateaus or decreases.
+
+```{python}
+import matplotlib.pyplot as plt
+
+# Plot training & validation accuracy values
+plt.figure(figsize=(12, 4))
+plt.subplot(1, 2, 1)
+plt.plot(history.history['accuracy'])
+plt.plot(history.history['val_accuracy'])
+plt.title('Model accuracy')
+plt.ylabel('Accuracy')
+plt.xlabel('Epoch')
+plt.legend(['Train', 'Test'], loc='upper left')
+
+# Plot training & validation loss values
+plt.subplot(1, 2, 2)
+plt.plot(history.history['loss'])
+plt.plot(history.history['val_loss'])
+plt.title('Model loss')
+plt.ylabel('Loss')
+plt.xlabel('Epoch')
+plt.legend(['Train', 'Test'], loc='upper left')
+
+plt.tight_layout()
+plt.show()
+
+```
+
+### **Make Predictions**
+
+1.  **Predictions:** The model outputs probabilities.
+
+2.  **Thresholding:** Convert probabilities to class labels (0 or 1) based on a threshold of 0.5.
+
+```{python}
+# Make predictions
+predictions = model.predict(X_test)
+
+# Convert probabilities to class labels
+predictions = (predictions > 0.5).astype(int)
+```

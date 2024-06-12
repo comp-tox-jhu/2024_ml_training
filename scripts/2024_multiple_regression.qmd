@@ -1,0 +1,295 @@
+---
+title: "Regression with Multiple Variables"
+editor: visual
+author: "Jason Laird"
+date: "06/12/2024"
+format: 
+  html:
+    toc: true
+    toc-location: left
+    theme: 
+      - flatly
+    linkcolor: '#555580'
+---
+
+## Load Libraries
+
+```{r}
+#| warning: false
+#| message: false
+
+
+library(tidymodels)  # parsnip and others
+library(readr)       # for importing data
+library(broom.mixed) # for converting bayesian models to tidy tibbles
+library(performance) # model performance
+library(ggpubr)      # plotting wrapper
+```
+
+## Load Data
+
+```{r}
+#| warning: false
+#| message: false
+
+
+brainspan_log <- readr::read_csv("../results/brainspan_log.csv") 
+```
+
+## Plot Data
+
+Oftentimes we are interested in what variables best predict a numeric outcome. In this case we need to add a bit more nuance to our initial discussion of modelling. Let's start with a problem - what best predicts the expression of myelinating binding protein? Well let's examine a few variables:
+
+```{r}
+#| warning: false
+#| message: false
+
+brainspan_log <- readr::read_csv("../results/brainspan_log.csv")
+```
+
+<div>
+
+### MBP v. GAPDH
+
+```{r}
+#| warning: false
+#| message: false
+brainspan_log %>% 
+  filter(MBP > 5) %>% 
+  ggplot(
+    aes(
+      x=GAPDH,
+      y=MBP
+    )
+  )+
+  geom_point(color="grey25")+
+  theme_pubr(legend="right")+
+  stat_smooth(method="lm",color="violetred4")+
+  stat_cor()
+```
+
+### MBP v. OLIG2
+
+```{r}
+#| warning: false
+#| message: false
+brainspan_log %>% 
+  filter(MBP > 5) %>% 
+  ggplot(
+    aes(
+      x=OLIG2,
+      y=MBP
+    )
+  )+
+  geom_point(color="grey25")+
+  theme_pubr(legend="right")+
+  stat_smooth(method="lm",color="violetred4")+
+  stat_cor()
+```
+
+### MBP v. EGR2
+
+```{r}
+#| warning: false
+#| message: false
+brainspan_log %>% 
+  filter(MBP > 5) %>% 
+  ggplot(
+    aes(
+      x=EGR2,
+      y=MBP
+    )
+  )+
+  geom_point(color="grey25")+
+  theme_pubr(legend="right")+
+  stat_smooth(method="lm",color="violetred4")+
+  stat_cor()
+```
+
+### MBP v. SOX10
+
+```{r}
+#| warning: false
+#| message: false
+brainspan_log %>% 
+  filter(MBP > 5) %>% 
+  ggplot(
+    aes(
+      x=SOX10,
+      y=MBP
+    )
+  )+
+  geom_point(color="grey25")+
+  theme_pubr(legend="right")+
+  stat_smooth(method="lm",color="violetred4")+
+  stat_cor()
+```
+
+</div>
+
+## Build the Model
+
+So here we have a few variables - `GAPDH, OLIG2, ERG2, SOX10` . Let's construct a regression model with these variables and examine the statistics:
+
+```{r}
+#| warning: false
+#| message: false
+
+
+lm_fit <- workflow() %>% 
+  # define the model
+  add_model(linear_reg() %>% 
+              set_engine("lm")) %>% 
+  # set the pre-processing
+  add_recipe(
+    brainspan_log %>% 
+      recipe(MBP ~ OLIG2+GAPDH+EGR2+SOX10) %>% 
+      step_filter(MBP>5) %>%
+      step_normalize(all_predictors())
+  ) %>% 
+  # fit the model to the pre-processed data
+  fit(data=brainspan_log)
+  
+
+broom::tidy(lm_fit) %>% 
+  filter(term != "(Intercept)") %>% 
+  mutate(bar_color=case_when(
+    estimate>0 & p.value<0.05 ~"up",
+    estimate<0 & p.value<0.05 ~"down",
+    .default = "not sig")) %>% 
+  ggplot(
+    aes(
+      x=reorder(term,-estimate),
+      y=estimate,
+      fill=bar_color
+    )
+  )+
+  scale_fill_manual(values=c(
+    "up"="firebrick4",
+    "down"="midnightblue",
+    "not sig"="grey25"
+  ))+
+  geom_bar(stat="identity")+
+  theme_pubr(legend="none")+
+  labs(
+    x="Model Term",
+    y="Coefficient"
+  )
+```
+
+Whoa! Why does OLIG2 have a negative coefficient? It is positively correlated with MBP. Before we answer this, let's look at our model QC:
+
+```{r}
+#| warning: false
+#| message: false
+lm_fit %>%
+  extract_fit_engine() %>% 
+  check_model(check = c(
+    "pp_check",
+    "linearity",
+    "homogeneity",
+    "outliers",
+    "vif"))
+```
+
+Here we see that OLIG2 an SOX10 are **colinear,** meaning they are positively correlated with our outcome, MBP, **but also each other!** This can interfere with the model's ability to estimate a relationship between the model features and the outcome variable independently.
+
+## Mulitverse of Models
+
+Now, what if we had multiple models? Well let's try a few models with a few different terms:
+
+```{r}
+#| warning: false
+#| message: false
+m1 <- workflow() %>% 
+  # define the model
+  add_model(linear_reg() %>% 
+              set_engine("lm")) %>% 
+  # set the pre-processing
+  add_recipe(
+    brainspan %>% 
+      recipe(MBP ~ SOX10) %>% 
+      step_filter(MBP>5) %>%
+      step_normalize(all_predictors())
+  ) %>% 
+  # fit the model to the pre-processed data
+  fit(data=brainspan)
+
+
+
+m2 <- workflow() %>% 
+  # define the model
+  add_model(linear_reg() %>% 
+              set_engine("lm")) %>% 
+  # set the pre-processing
+  add_recipe(
+    brainspan %>% 
+      recipe(MBP ~ SOX10+EGR2) %>% 
+      step_filter(MBP>5) %>%
+      step_normalize(all_predictors())
+  ) %>% 
+  # fit the model to the pre-processed data
+  fit(data=brainspan)
+
+m3 <- workflow() %>% 
+  # define the model
+  add_model(linear_reg() %>% 
+              set_engine("lm")) %>% 
+  # set the pre-processing
+  add_recipe(
+    brainspan %>% 
+      recipe(MBP ~ SOX10+EGR2+GAPDH) %>% 
+      step_filter(MBP>5) %>%
+      step_normalize(all_predictors())
+  ) %>% 
+  # fit the model to the pre-processed data
+  fit(data=brainspan)
+
+
+plot(compare_performance(m1 %>% 
+                           extract_fit_engine(),
+                         m2%>% 
+                           extract_fit_engine(),
+                         m3%>% 
+                           extract_fit_engine(), 
+                         rank = TRUE,
+                         verbose = FALSE))
+```
+
+```{r}
+#| warning: false
+#| message: false
+compare_performance(m1 %>% 
+                           extract_fit_engine(),
+                         m2%>% 
+                           extract_fit_engine(),
+                         m3%>% 
+                           extract_fit_engine(),
+                    rank = TRUE,
+                    verbose = FALSE)
+```
+
+Let's look at each of these terms:
+
+-   **R² (R-squared)**: A measure of the proportion of variance in the dependent variable that is predictable from the independent variables. Higher values indicate better fit.
+
+-   **R² (adj.) (Adjusted R-squared)**: Similar to R², but adjusted for the number of predictors in the model. It accounts for the model complexity and helps prevent overfitting. Higher values are better.
+
+-   **RMSE (Root Mean Squared Error)**: The square root of the average of the squared differences between observed and predicted values. Lower values indicate better fit.
+
+-   **Sigma**: The standard deviation of the residuals (errors). Lower values indicate that the model's predictions are closer to the actual values.
+
+-   **AIC weights (Akaike Information Criterion weights)**: Used to compare models, where a lower AIC value indicates a better model. AIC weights provide a normalized measure of the relative quality of the models.
+
+-   **AICc weights (Corrected AIC weights)**: A variant of AIC adjusted for small sample sizes. Similar interpretation as AIC weights.
+
+-   **BIC weights (Bayesian Information Criterion weights)**: Similar to AIC but includes a penalty term for the number of parameters in the model. Lower BIC indicates a better model, and BIC weights provide a normalized measure.
+
+-   **Performance-Score**: A composite score based on various performance metrics. Higher values indicate better overall performance.
+
+So given this, we see that model three is the best model by these metrics!
+
+## References
+
+1.  [STHDA](http://www.sthda.com/english/articles/38-regression-model-validation/158-regression-model-accuracy-metrics-r-square-aic-bic-cp-and-more/)
+2.  [Getting Started - Tidymodels](https://www.tidymodels.org/start/)

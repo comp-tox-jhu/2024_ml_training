@@ -1,0 +1,251 @@
+---
+title: "Model Prediction and Evaluation"
+subtitle: ""
+editor: visual
+author: "Jason Laird"
+date: "06/12/2024"
+format: 
+  html:
+    toc: true
+    toc-location: left
+    theme: 
+      - flatly
+    linkcolor: '#555580'
+---
+
+## Load Libraries
+
+```{r}
+#| warning: false
+#| message: false
+
+
+library(tidymodels)  # parsnip and others
+library(readr)       # for importing data
+library(broom.mixed) # for converting bayesian models to tidy tibbles
+library(performance) # model performance
+library(ggpubr)      # plotting wrapper
+```
+
+## Load Data
+
+```{r}
+#| warning: false
+#| message: false
+
+brainspan_log <- readr::read_csv("../results/brainspan_log.csv") 
+```
+
+## Training and Test Data
+
+[![Image from DataCamp](images/dtree_test_set.png)](https://campus.datacamp.com/courses/supervised-learning-in-r-classification/classification-trees-4?ex=7)
+
+The whole point of creating a model is prediction. How can I predict this outcome? When we are creating a model it is useful to split our original data frame into a **training set** to create our model and a **test set** where we test our model's predictive capabilities. Let's split our data into a training and test set:
+
+```{r}
+#| warning: false
+#| message: false
+brainspan_log_initial_split <- initial_split(brainspan_log,strata = gender)
+
+brainspan_training <- training(brainspan_log_initial_split)
+
+brainspan_test <- testing(brainspan_log_initial_split)
+```
+
+Now let's see how well our proportions of each gender match the original data. This is to ensure we don't have a **class imbalance** where one dataset has a different proportion of categories than the other:
+
+```{r}
+#| warning: false
+#| message: false
+# all data proportions by gender
+brainspan_log %>% 
+  count(gender) %>% 
+  mutate(prop = n/sum(n))
+```
+
+```{r}
+#| warning: false
+#| message: false
+# training set proportions by gender
+brainspan_training %>% 
+  count(gender) %>% 
+  mutate(prop = n/sum(n))
+```
+
+```{r}
+#| warning: false
+#| message: false
+# test set proportions by gender
+brainspan_test %>% 
+  count(gender) %>% 
+  mutate(prop = n/sum(n))
+```
+
+## Build a Model
+
+```{r}
+#| warning: false
+#| message: false
+log_fit <- workflow() %>% 
+  # define the model
+  add_model(logistic_reg() %>% 
+              set_engine("glm")) %>% 
+  # set the pre-processing
+  add_recipe(
+    brainspan_log %>% 
+      recipe(gender ~ NLRP2+LAMA4+JPX) %>% 
+      step_mutate(gender=factor(gender,levels=c("M","F"))) %>% 
+      step_normalize(all_predictors())
+  ) %>% 
+  # fit the model to the pre-processed data
+  fit(data=brainspan_log)
+```
+
+## Initial Predictions
+
+Say we didn't have that test set to test our predictions. Well in that case we could initially start by examining how well the model predicts the training data:
+
+```{r}
+#| warning: false
+#| message: false
+log_aug <- log_fit %>% 
+  augment(.,brainspan_training) %>% 
+  dplyr::select(starts_with(c(".pred","gender"))) %>% 
+  mutate(gender=factor(gender,levels=c("M","F"))) 
+
+log_aug %>% 
+  roc_curve(truth = gender, .pred_M) %>% 
+  autoplot()+
+  labs(
+    title=paste(
+      "AUC:",
+      log_aug %>% 
+        roc_auc(truth = gender, .pred_M) %>%
+        pull(.estimate) %>%
+        round(digits = 3))
+  )
+  
+```
+
+Here we plot out the:
+
+-   **specificity** or ability to determine who **is not** in the class
+
+-   **sensitivity** or ability to determine who **is** in the class
+
+The area under this curve (AUC) is an indicator of how well the model balances both specificity and sensitivity. Anything above .50 or 50% is technically better than random chance. However, there is an issue here. Our AUC is amazing - 0.999! This is likely because our model has memorized our training data and is really good at predicting it.
+
+## Cross Validation
+
+[![Image from Mathworks - Cross Validation](images/cross_validation.jpg)](https://www.mathworks.com/discovery/cross-validation.html)
+
+To get a more realistic estimate we can cross validate our model. Cross validation is always used on the training set and is a way of getting a realistic estimate of our model's capabilities. Essentially in each *fold* of the cross validation, the training data is split again into a training and test set. Then we make our predictions and can get a less biased view of it's performance:
+
+```{r}
+#| warning: false
+#| message: false
+folds <- vfold_cv(brainspan_training, v = 10)
+
+log_fit_cv <- workflow() %>% 
+  # define the model
+  add_model(logistic_reg() %>% 
+              set_engine("glm")) %>% 
+  # set the pre-processing
+  add_recipe(
+    brainspan_log %>% 
+      recipe(gender ~ NLRP2+LAMA4+JPX) %>% 
+      step_mutate(gender=factor(gender,levels=c("M","F"))) %>% 
+      step_normalize(all_predictors())
+  ) %>% 
+  # run our cross validation
+  fit_resamples(folds)
+
+collect_metrics(log_fit_cv)
+
+```
+
+Here we see that indeed the accuracy and AUC are a bit lower than the predictions based off the training set would suggest. These differences become much more pronounced with models like random forest models which are great at memorizing data.
+
+## Bootstrapping
+
+We can also use a technique called bootstrapping to better gauge our model's performance. Bootstrapping involves taking a sample and then resamples that sample with replacement - meaning that when you take that subsample you can use the same samples. In cross validation, you don't sample with replacement. Each fold in cross validation contains unique samples. So let's try out bootstrapping!
+
+```{r}
+#| warning: false
+#| message: false
+boots <- bootstraps(brainspan_log,
+                    times = 50, 
+                    apparent = TRUE)
+
+
+boot_models <-
+  boots %>% 
+  mutate(
+    model = map(splits, ~ fit(
+      # set the workflow
+      workflow() %>% 
+        # define the model
+        add_model(logistic_reg() %>% 
+                    set_engine("glm")) %>% 
+        # set the pre-processing
+        add_recipe(
+          brainspan_log %>% 
+            recipe(gender ~ NLRP2+LAMA4+JPX) %>% 
+            step_mutate(gender=factor(gender,levels=c("M","F"))) %>% 
+            step_normalize(all_predictors())
+        ) , 
+      data = analysis(.x))),
+    coef = map(model, tidy)
+  ) 
+  
+boot_coefs <- boot_models %>% 
+  unnest(coef)
+
+percentile_intervals <- int_pctl(boot_models, boot_coefs)
+  
+boot_coefs %>% 
+  filter(term != "(Intercept)") %>% 
+  ggplot(aes(
+    x=estimate,
+    fill=term
+  ))+
+  geom_density()+
+  geom_vline(aes(xintercept = .lower), data = percentile_intervals, col = "violetred4") +
+  geom_vline(aes(xintercept = .upper), data = percentile_intervals, col = "violetred4")+
+  facet_grid(.~term)+
+  scale_fill_manual(values=get_palette("npg",k=4))+
+  theme_pubr(legend="right")
+```
+
+## Predictions Using the Test Set
+
+Now let's examine our predictions on the test set!
+
+```{r}
+#| warning: false
+#| message: false
+log_aug_test <- log_fit %>% 
+  augment(.,brainspan_test) %>% 
+  dplyr::select(starts_with(c(".pred","gender"))) %>% 
+  mutate(gender=factor(gender,levels=c("M","F"))) 
+
+log_aug_test %>% 
+  roc_curve(truth = gender, .pred_M) %>% 
+  autoplot()+
+  labs(
+    title=paste(
+      "AUC:",
+      log_aug_test %>% 
+        roc_auc(truth = gender, .pred_M) %>%
+        pull(.estimate) %>%
+        round(digits = 3))
+  )
+```
+
+Whoa, the prediction is way better - how come? Well keep in mind that when we split our data into training and test sets that was a one time thing. The AUC is a statistic and a result of a one time split. This is why cross-validation and boostrapping approaches are more robust estimates of actual model perforamance given the fact they examine multiple training and test sets!
+
+## References
+
+1.  [Evaluate your model with resampling](https://www.tidymodels.org/start/resampling/)
+2.  [Data Camp - Training and Test Split](https://campus.datacamp.com/courses/supervised-learning-in-r-classification/classification-trees-4?ex=7)
+3.  [Mathworks - Cross Validation](https://www.mathworks.com/discovery/cross-validation.html)
